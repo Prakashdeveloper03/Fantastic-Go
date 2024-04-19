@@ -1,58 +1,59 @@
 package main
 
 import (
-	"bufio"
+	"flag"
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strings"
+
+	"github.com/olekukonko/tablewriter"
 )
 
 func main() {
-	fmt.Println("Domain Checker CLI")
-	fmt.Println("Enter one or more domains to check (separated by newline):")
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for scanner.Scan() {
-		domain := scanner.Text()
-		if domain == "" {
-			continue
-		}
-		checkDomain(domain)
+	flag.Parse()
+	domains := flag.Args()
+	if len(domains) == 0 {
+		fmt.Println("Please provide one or more domains as command-line arguments.")
+		return
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading input: %v", err)
+	var data [][]string
+	for _, domain := range domains {
+		row := checkDomain(domain)
+		data = append(data, row)
 	}
+
+	printResults(data)
 }
 
-func checkDomain(domain string) {
-	var hasMX, hasSPF, hasDMARC bool
-	var spfRecord, dmarcRecord string
+func checkDomain(domain string) []string {
+	var row []string
 
 	mxRecords, err := net.LookupMX(domain)
 	if err != nil {
 		log.Printf("Error looking up MX records for %s: %v", domain, err)
 	}
 
-	if len(mxRecords) > 0 {
-		hasMX = true
-	}
+	hasMX := len(mxRecords) > 0
+	row = append(row, domain)
+	row = append(row, fmt.Sprintf("%t", hasMX))
 
 	txtRecords, err := net.LookupTXT(domain)
 	if err != nil {
 		log.Printf("Error looking up TXT records for %s: %v", domain, err)
 	}
 
+	var spfRecord, dmarcRecord string
 	for _, record := range txtRecords {
 		if strings.HasPrefix(record, "v=spf1") {
-			hasSPF = true
 			spfRecord = record
 			break
 		}
 	}
+	hasSPF := spfRecord != ""
+	row = append(row, fmt.Sprintf("%t", hasSPF))
+	row = append(row, spfRecord)
 
 	dmarcRecords, err := net.LookupTXT("_dmarc." + domain)
 	if err != nil {
@@ -61,15 +62,27 @@ func checkDomain(domain string) {
 
 	for _, record := range dmarcRecords {
 		if strings.HasPrefix(record, "v=DMARC1") {
-			hasDMARC = true
 			dmarcRecord = record
 			break
 		}
 	}
+	hasDMARC := dmarcRecord != ""
+	row = append(row, fmt.Sprintf("%t", hasDMARC))
+	row = append(row, dmarcRecord)
 
-	fmt.Printf("Domain: %s\n", domain)
-	fmt.Printf("MX Record: %t\n", hasMX)
-	fmt.Printf("SPF Record: %t (%s)\n", hasSPF, spfRecord)
-	fmt.Printf("DMARC Record: %t (%s)\n", hasDMARC, dmarcRecord)
-	fmt.Println("-------------------------------------------------------")
+	return row
+}
+
+func printResults(data [][]string) {
+	table := tablewriter.NewWriter(log.Writer())
+	table.SetHeader([]string{"Domain", "Has MX", "Has SPF", "SPF Record", "Has DMARC", "DMARC Record"})
+	table.SetBorders(tablewriter.Border{Left: true, Top: true, Right: true, Bottom: true})
+	table.SetCenterSeparator("|")
+	for i, row := range data {
+		table.Append(row)
+		if i < len(data)-1 {
+			table.Append([]string{"", "", "", "", "", ""})
+		}
+	}
+	table.Render()
 }
